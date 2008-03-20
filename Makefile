@@ -2,7 +2,7 @@
 CFLAGS = -O2 -Wall -g
 LFLAGS = -g
 
-OBJECTS = main.o
+OBJECTS = src/main.o
 
 all: aq1
 
