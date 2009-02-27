@@ -72,15 +72,15 @@ static InstructionMapType INSTRUCTION_MAP[] = {
    {  "cczn",     0x0F,    1  },
 
    /* LS-class */
-   {  "ldb",      0x11,    1  },
-   {  "ldc",      0x12,    1  },
-   {  "lxh",      0x13,    1  },
-   {  "lxl",      0x14,    1  },
+   {  "ldb",      0x10,    1  },
+   {  "ldc",      0x11,    1  },
+   {  "lxh",      0x12,    1  },
+   {  "lxl",      0x13,    1  },
+   {  "stb",      0x14,    1  },
+   {  "stc",      0x15,    1  },
+   {  "sxh",      0x16,    1  },
+   {  "sxl",      0x17,    1  },
    {  "sta",      0x18,    1  },
-   {  "stb",      0x19,    1  },
-   {  "stc",      0x1A,    1  },
-   {  "sxh",      0x1B,    1  },
-   {  "sxl",      0x1C,    1  },
 
    /* A-class */
    {  "and",      0x20,    0  },
@@ -89,25 +89,28 @@ static InstructionMapType INSTRUCTION_MAP[] = {
    {  "shr",      0x23,    0  },
    {  "add",      0x24,    0  },
    {  "inc",      0x25,    0  },
-   {  "not",      0x26,    0  },
-   {  "clr",      0x27,    0  },
+   {  "dec",      0x26,    0  },
+   {  "not",      0x27,    0  },
+   {  "clr",      0x28,    0  },
 
    /* M-class */
    {  "mab",      0x30,    0  },
    {  "mac",      0x31,    0  },
-   {  "lbx",      0x32,    0  },
-   {  "lcx",      0x33,    0  },
-   {  "sax",      0x34,    0  },
-   {  "sal",      0x35,    0  },
-   {  "sah",      0x36,    0  },
+   {  "sax",      0x32,    0  },
+   {  "sbx",      0x33,    0  },
+   {  "scx",      0x34,    0  },
+   {  "lbx",      0x35,    0  },
+   {  "lcx",      0x36,    0  },
    {  "ret",      0x37,    0  },
-   {  "hlt",      0x3F,    0  },
+   {  "hlt",      0x38,    0  },
 
    /* Pseudo-instructions */
    {  "db",       BYTE_OP, 1  },
    {  "dw",       WORD_OP, 1  }
 
 };
+
+static enum { OUT_LISTING, OUT_RAW, OUT_HEX } output_format = OUT_LISTING;
 
 static const size_t instruction_count
    = sizeof(INSTRUCTION_MAP) / sizeof(INSTRUCTION_MAP[0]);
@@ -158,6 +161,12 @@ int main(int argc, char *argv[]) {
             output_name = argv[x + 1];
             ++x;
          }
+      } else if(!strcmp(argv[x], "-raw")) {
+         output_format = OUT_RAW;
+      } else if(!strcmp(argv[x], "-list")) {
+         output_format = OUT_LISTING;
+      } else if(!strcmp(argv[x], "-hex")) {
+         output_format = OUT_HEX;
       } else if(!strcmp(argv[x], "-h")) {
          DisplayUsage(argv[0]);
          return 0;
@@ -175,7 +184,17 @@ int main(int argc, char *argv[]) {
       return -1;
    }
    if(output_name == NULL) {
-      output_name = "a.lst";
+      switch(output_format) {
+      case OUT_RAW:
+         output_name = "out.raw";
+         break;
+      case OUT_HEX:
+         output_name = "out.hex";
+         break;
+      default:
+         output_name = "out.lst";
+         break;
+      }
    }
 
    input_fd = fopen(input_name, "r");
@@ -189,7 +208,7 @@ int main(int argc, char *argv[]) {
    symbols = NULL;
    DoFirstPass(input_fd);
    if(error_count == 0) {
-      output_fd = fopen(output_name, "w");
+      output_fd = fopen(output_name, output_format == OUT_RAW ? "wb" : "w");
       if(output_fd == NULL) {
          fclose(input_fd);
          fprintf(stderr, "ERROR: could not open %s for writing\n", output_name);
@@ -210,7 +229,12 @@ int main(int argc, char *argv[]) {
 }
 
 void DisplayUsage(const char *name) {
-   fprintf(stderr, "usage: %s [-o <filename>] filename\n", name);
+   fprintf(stderr, "usage: %s <options> filename\n", name);
+   fprintf(stderr, "options:\n");
+   fprintf(stderr, "\t-o <filename>   Output filename\n");
+   fprintf(stderr, "\t-raw            Raw output\n");
+   fprintf(stderr, "\t-list           Listing output\n");
+   fprintf(stderr, "\t-hex            Hex output\n");
 }
 
 void DoFirstPass(FILE *fd) {
@@ -258,12 +282,16 @@ void DoSecondPass(FILE *input, FILE *output) {
             break;
          }
          *end = 0;
-         fprintf(output, "                    %s\n", start);
+         if(output_format == OUT_LISTING) {
+            fprintf(output, "                    %s\n", start);
+         }
          start = end + 1;
       }
 
       // Output the address.
-      fprintf(output, "%04X ", current_address);
+      if(output_format == OUT_LISTING) {
+         fprintf(output, "%04X ", current_address);
+      }
 
       // Output the opcode.
       switch(statement.op) {
@@ -271,7 +299,17 @@ void DoSecondPass(FILE *input, FILE *output) {
       case WORD_OP:
          break;
       default:
-         fprintf(output, "%02X", statement.op);
+         switch(output_format) {
+         case OUT_RAW:
+            fprintf(output, "%c", statement.op);
+            break;
+         case OUT_HEX:
+            fprintf(output, "%02X\n", statement.op);
+            break;
+         default: // LISTING
+            fprintf(output, "%02X", statement.op);
+            break;
+         }
          break;
       }
 
@@ -280,34 +318,57 @@ void DoSecondPass(FILE *input, FILE *output) {
          temp = Evaluate(statement.arg);
          switch(statement.op) {
          case BYTE_OP:
-            fprintf(output, "%02X", temp);
+            switch(output_format) {
+            case OUT_RAW:
+               fprintf(output, "%c", temp);
+               break;
+            case OUT_HEX:
+               fprintf(output, "%02X\n", temp);
+               break;
+            default: // LISTING
+               fprintf(output, "%02X", temp);
+               break;
+            }
             break;
          default:
-            fprintf(output, " %02X %02X", temp >> 8, temp & 0xFF);
+            switch(output_format) {
+            case OUT_RAW:
+               fprintf(output, "%c%c", temp >> 8, temp & 0xFF);
+               break;
+            case OUT_HEX:
+               fprintf(output, "%02X\n", temp >> 8);
+               fprintf(output, "%02X\n", temp & 0xFF);
+               break;
+            default: // LISTING
+               fprintf(output, " %02X %02X", temp >> 8, temp & 0xFF);
+               break;
+            }
             break;
          }
       }
 
-      len = 0;
-      switch(statement.op) {
-      case BYTE_OP:
-         len = 3;
-         break;
-      case WORD_OP:
-         len = 6;
-         break;
-      default:
-         if(statement.arg) {
-            len = 9;
-         } else {
+      if(output_format == OUT_LISTING) {
+         len = 0;
+         switch(statement.op) {
+         case BYTE_OP:
             len = 3;
+            break;
+         case WORD_OP:
+            len = 6;
+            break;
+         default:
+            if(statement.arg) {
+               len = 9;
+            } else {
+               len = 3;
+            }
+            break;
          }
-         break;
+         for(temp = 0; temp < (16 - len); temp++) {
+            fprintf(output, " ");
+         }
+         fprintf(output, "%s\n", start);
       }
-      for(temp = 0; temp < (16 - len); temp++) {
-         fprintf(output, " ");
-      }
-      fprintf(output, "%s\n", start);
 
       ++current_address;
       if(statement.arg) {
@@ -704,7 +765,9 @@ TokenNode *Tokenize(const char *expr) {
          last = tp;
          tp->type = TOK_SYMBOL;
          endptr = (char*)&expr[x] + 1;
-         while((*endptr >= 'a' && *endptr <= 'z') || *endptr == '_') {
+         while((*endptr >= 'a' && *endptr <= 'z')
+               || (*endptr >= '0' && *endptr <= '9')
+               || *endptr == '_') {
             ++endptr;
          }
          tp->symbol = malloc(endptr - &expr[x] + 1);
