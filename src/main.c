@@ -4,6 +4,8 @@
 #include <string.h>
 #include <ctype.h>
 
+#define MAX_INCLUDES 8
+
 #define BLOCK_SIZE   64
 #define INVALID_OP   0xFF
 #define BYTE_OP      0xFE
@@ -11,6 +13,12 @@
 
 typedef unsigned char OperationType;
 typedef unsigned int AddressType;
+
+typedef struct MacroType {
+   char *name;
+   char *value;
+   struct MacroType *next;
+} MacroType;
 
 typedef struct {
    char *arg;
@@ -117,14 +125,20 @@ static const size_t instruction_count
 
 static int error_count;
 static SymbolNode *symbols;
+static MacroType *macros;
 static AddressType current_address;
 static unsigned int byte_count;
 
 static void DisplayUsage(const char *name);
+static FILE *DoPreprocess(const char *filename);
+static void DoPreprocessFile(const char *filename, int level, FILE *out_fd);
+static void ProcessDefineStart(const char *line, char **name);
+static void ProcessDefine(const char *line, const char *name);
+static void ProcessDefineEnd(char **name);
 static void DoFirstPass(FILE *fd);
 static void DoSecondPass(FILE *input, FILE *output);
 static int GetStatement(FILE *fd, StatementType *statement, int do_add,
-   char **raw);
+                        char **raw);
 static StatementType ParseStatement(char *line);
 static void ParseLabel(char *line, int do_add);
 static void ToLower(char *line);
@@ -134,6 +148,9 @@ static void StripWhitespace(char *line);
 static int ReadLine(FILE *fd, char **line);
 static int AddSymbol(const char *name, size_t len, unsigned int value);
 static SymbolNode *FindSymbol(const char *name, size_t len);
+static int AddMacro(const char *name);
+static MacroType *FindMacro(const char *name);
+static void AppendMacro(const char *name, const char *value);
 static TokenNode *Tokenize(const char *expr);
 static unsigned int Evaluate(const char *expr);
 static unsigned int Eval1(TokenNode **tp);
@@ -197,16 +214,14 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   input_fd = fopen(input_name, "r");
-   if(input_fd == NULL) {
-      fprintf(stderr, "ERROR: could not open %s for reading\n", input_name);
-      return -1;
-   }
-
    byte_count = 0;
    error_count = 0;
    symbols = NULL;
-   DoFirstPass(input_fd);
+   macros = NULL;
+   input_fd = DoPreprocess(input_name);
+   if(input_fd != NULL) {
+      DoFirstPass(input_fd);
+   }
    if(error_count == 0) {
       output_fd = fopen(output_name, output_format == OUT_RAW ? "wb" : "w");
       if(output_fd == NULL) {
@@ -218,8 +233,9 @@ int main(int argc, char *argv[]) {
       DoSecondPass(input_fd, output_fd);
       fclose(output_fd);
    }
-
-   fclose(input_fd);
+   if(input_fd) {
+      fclose(input_fd);
+   }
 
    printf("Errors:     %u\n", error_count);
    printf("Byte count: %u\n", byte_count);
@@ -609,6 +625,7 @@ int ReadLine(FILE *fd, char **line) {
          temp[len] = 0;
          *line = temp;
          fprintf(stderr, "ERROR: read failed on input\n");
+         ++error_count;
          return 0;
       }
 
@@ -661,6 +678,58 @@ SymbolNode *FindSymbol(const char *name, size_t len) {
    }
 
    return NULL;
+
+}
+
+int AddMacro(const char *name) {
+
+   MacroType *mp;
+
+   if(FindMacro(name)) {
+      return 0;
+   }
+
+   mp = malloc(sizeof(MacroType));
+   mp->name = malloc(strlen(name) + 1);
+   strcpy(mp->name, name);
+   mp->value = NULL;
+   mp->next = macros;
+   macros = mp;
+
+   return 1;
+
+}
+
+MacroType *FindMacro(const char *name) {
+
+   MacroType *mp;
+   for(mp = macros; mp; mp = mp->next) {
+      if(!strcmp(name, mp->name)) {
+         return mp;
+      }
+   }
+
+   return NULL;
+
+}
+
+void AppendMacro(const char *name, const char *value) {
+
+   MacroType *mp;
+   size_t len;
+
+   mp = FindMacro(name);
+
+   len = strlen(value) + 2;
+   if(mp->value) {
+      len += strlen(mp->value);
+      mp->value = realloc(mp->value, len);
+   } else {
+      mp->value = malloc(len);
+      mp->value[0] = 0;
+   }
+   strcat(mp->value, value);
+   strcat(mp->value, "\n");
 
 }
 
@@ -911,6 +980,105 @@ unsigned int Eval4(TokenNode **tp) {
    }
 
    return result;
+
+}
+
+FILE *DoPreprocess(const char *filename) {
+
+   FILE *out_fd;
+
+   out_fd = tmpfile();
+   if(out_fd == NULL) {
+      fprintf(stderr, "ERROR: could not open temporary file\n");
+      ++error_count;
+      return NULL;
+   }
+
+   DoPreprocessFile(filename, 0, out_fd);
+
+   rewind(out_fd);
+   return out_fd;
+
+}
+
+void DoPreprocessFile(const char *filename, int level, FILE *out_fd) {
+
+   FILE *in_fd;
+   char *line;
+   char *current_define;
+
+   if(level >= MAX_INCLUDES) {
+      fprintf(stderr, "ERROR: exceeded %d levels\n", MAX_INCLUDES);
+      ++error_count;
+      return;
+   }
+
+   in_fd = fopen(filename, "r");
+   if(in_fd == NULL) {
+      fprintf(stderr, "ERROR: could not open %s for reading\n", filename);
+      ++error_count;
+      return;
+   }
+
+   current_define = NULL;
+   while(ReadLine(in_fd, &line)) {
+      if(line[0] == '#') {
+         StripWhitespace(line);
+         if(       !strncmp(line, "#include ", 9)) {
+            DoPreprocessFile(&line[10], level + 1, out_fd);
+         } else if(!strncmp(line, "#define ", 8)) {
+            ProcessDefineStart(&line[9], &current_define);
+         } else if(!strncmp(line, "#end", 4)) {
+            ProcessDefineEnd(&current_define);
+         } else {
+            fprintf(stderr, "ERROR: preprocessor: \"%s\"\n",
+                    line);
+            ++error_count;
+         }
+      } else if(current_define) {
+         ProcessDefine(line, current_define);
+      } else {
+         fprintf(out_fd, "%s\n", line);
+      }
+      free(line);
+   }
+
+   fclose(in_fd);
+
+}
+
+void ProcessDefineStart(const char *line, char **name) {
+
+   size_t len;
+
+   if(*name) {
+      fprintf(stderr, "ERROR: \"#define\" without \"#end\"\n");
+      ++error_count;
+      return;
+   }
+
+   len = strlen(line);
+   *name = malloc(len + 1);
+   strcpy(*name, line);
+
+   AddMacro(*name);
+
+}
+
+void ProcessDefine(const char *line, const char *name) {
+   AppendMacro(name, line);
+}
+
+void ProcessDefineEnd(char **name) {
+
+   if(!*name) {
+      fprintf(stderr, "ERROR: \"#end\" not inside a \"#define\"\n");
+      ++error_count;
+      return;
+   }
+
+   free(*name);
+   *name = NULL;
 
 }
 
