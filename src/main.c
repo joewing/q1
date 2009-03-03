@@ -135,6 +135,7 @@ static void DoPreprocessFile(const char *filename, int level, FILE *out_fd);
 static void ProcessDefineStart(const char *line, char **name);
 static void ProcessDefine(const char *line, const char *name);
 static void ProcessDefineEnd(char **name);
+static void ProcessMacro(const char *name, FILE *fd);
 static void DoFirstPass(FILE *fd);
 static void DoSecondPass(FILE *input, FILE *output);
 static int GetStatement(FILE *fd, StatementType *statement, int do_add,
@@ -1030,6 +1031,8 @@ void DoPreprocessFile(const char *filename, int level, FILE *out_fd) {
             ProcessDefineStart(&line[9], &current_define);
          } else if(!strncmp(line, "#end", 4)) {
             ProcessDefineEnd(&current_define);
+         } else if(!strncmp(line, "#macro ", 7)) {
+            ProcessMacro(&line[8], out_fd);
          } else {
             fprintf(stderr, "ERROR: preprocessor: \"%s\"\n",
                     line);
@@ -1079,6 +1082,21 @@ void ProcessDefineEnd(char **name) {
 
    free(*name);
    *name = NULL;
+
+}
+
+void ProcessMacro(const char *name, FILE *fd) {
+
+   MacroType *mp;
+
+   mp = FindMacro(name);
+   if(!mp) {
+      fprintf(stderr, "ERROR: macro \"%s\" not found\n", name);
+      ++error_count;
+      return;
+   }
+
+   fprintf(fd, "%s", mp->value);
 
 }
 
