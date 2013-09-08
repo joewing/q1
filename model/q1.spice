@@ -1,0 +1,114 @@
+Q1 Circuits
+* This is a SPICE model for some of the circuits that make up the Q1.
+* See http://joewing.net/projects/q1
+
+.model q2n2222a npn (IS=14.34F XTI=3 EG=1.11 VAF= 74.03 BF=255.9 NE=1.307
++                    ISE=14.34F IKF=.2847 XTB=1.5 BR=6.092 NC=2 ISC=0 IKR=0
++                    RC=1 CJC=7.306P MJC=.3416 VJC=.75 FC=.5 CJE=22.01P
++                    MJE=.377 VJE=.75 TR=46.91N TF=411.1P ITF=.6 VTF=1.7
++                    XTF=3 RB=10)
+
+* Power supply. 5 Volts.
+.subckt power out
+vcc out 0 5
+.ends
+
+* Bi-stable oscillator.
+.subckt osc out
+x1 1 power
+r1 1 2 1k
+r2 1 3 1k
+c1 2 5 0.47u
+c2 3 4 0.47u
+r3 4 1 100k
+r4 5 1 100k
+q1 2 4 0 q2n2222a
+q2 3 5 0 q2n2222a
+r5 3 out 0
+.ends
+
+* Schmitt trigger.
+.subckt trigger in out
+x1 1 power
+r1 in 2
+r2 1 3 100k
+r3 4 0 100
+q1 3 2 4 q2n2222a
+r4 3 5 10k
+r5 1 6 1k
+q2 6 5 4 q2n2222a
+r6 6 out 0
+.ends
+
+* Open-collector inverter.
+.subckt invoc in out
+x1 1 power
+r1 1 2 10k
+q1 3 2 in q2n2222a
+q2 out 3 0 q2n2222a
+.ends
+
+* Inverter.
+.subckt inv in out
+x1 1 power
+x2 in out invoc
+r1 out 1 1k
+.ends
+
+* Open-collector, 2-input NAND gate.
+.subckt nand2oc a b out
+x1 1 power
+r1 1 2 10k
+q1 3 2 a q2n2222a
+q2 3 2 b q2n2222a
+q3 out 3 0 q2n2222a
+.ends
+
+* 2-input NAND gate.
+.subckt nand2 a b out
+x1 1 power
+x2 a b out nand2oc
+r1 out 1 1k
+.ends
+
+* Open-collector, 3-input NAND gate.
+.subckt nand3oc a b c out
+x1 1 power
+r1 1 2 10k
+q1 3 2 a q2n2222a
+q2 3 2 b q2n2222a
+q3 3 2 c q2n2222a
+q3 out 3 0 q2n2222a
+.ends
+
+* 3-input NAND gate.
+.subckt nand3 a b c out
+x1 1 power
+x2 a b c out nand3oc
+r1 out 1 1k
+.ends
+
+* D Flip-flop.
+.subckt dff d clk rst q nq
+x1 1 power
+x2 2 3 4 nand2
+x3 4 clk 3 nand2
+x4 3 clk 2 5 nand3
+x5 5 d 2 nand2
+x6 rst q invoc
+x7 3 nq q nand2
+x8 q 5 nq nand2
+.ends
+
+x1 t1 osc
+x2 t1 t2 trigger
+x3 t2 t3 inv
+x4 t4 t3 0 qa t4 dff
+x5 t5 t4 0 qb t5 dff
+
+.control
+tran 0.01m 1
+plot t3 t4 t5
+.endc
+
+.end
