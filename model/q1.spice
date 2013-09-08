@@ -13,31 +13,34 @@ Q1 Circuits
 vcc out 0 5
 .ends
 
+* Reset signal.
+.subckt reset rst
+vcc rst 0 pulse(0 5 1m 0 0 1m 0)
+.ends
+
 * Bi-stable oscillator.
 .subckt osc out
 x1 1 power
 r1 1 2 1k
-r2 1 3 1k
+r2 1 out 1k
 c1 2 5 0.47u
-c2 3 4 0.47u
+c2 out 4 0.47u
 r3 4 1 100k
 r4 5 1 100k
 q1 2 4 0 q2n2222a
-q2 3 5 0 q2n2222a
-r5 3 out 0
+q2 out 5 0 q2n2222a
 .ends
 
 * Schmitt trigger.
 .subckt trigger in out
 x1 1 power
-r1 in 2
+r1 in 2 10k
 r2 1 3 100k
 r3 4 0 100
 q1 3 2 4 q2n2222a
 r4 3 5 10k
-r5 1 6 1k
-q2 6 5 4 q2n2222a
-r6 6 out 0
+r5 1 out 1k
+q2 out 5 4 q2n2222a
 .ends
 
 * Open-collector inverter.
@@ -78,7 +81,7 @@ r1 1 2 10k
 q1 3 2 a q2n2222a
 q2 3 2 b q2n2222a
 q3 3 2 c q2n2222a
-q3 out 3 0 q2n2222a
+q4 out 3 0 q2n2222a
 .ends
 
 * 3-input NAND gate.
@@ -86,6 +89,20 @@ q3 out 3 0 q2n2222a
 x1 1 power
 x2 a b c out nand3oc
 r1 out 1 1k
+.ends
+
+* Full adder.
+.subckt adder a b c sum cout
+x1 1 power
+x2 a b 2 nand2
+x3 a 3 4 nand2
+x4 b 3 5 nand2
+x5 4 5 6 nand2
+x6 6 c 7 nand2
+x7 6 7 8 nand2
+x8 c 7 9 nand2
+x9 8 9 sum nand2
+x10 2 7 cout nand2
 .ends
 
 * D Flip-flop.
@@ -100,15 +117,17 @@ x7 3 nq q nand2
 x8 q 5 nq nand2
 .ends
 
+x0 rst reset
 x1 t1 osc
 x2 t1 t2 trigger
-x3 t2 t3 inv
-x4 t4 t3 0 qa t4 dff
-x5 t5 t4 0 qb t5 dff
+x3 t2 ina inv
+x4 t4 ina rst inb t4 dff
+x5 t5 t4 rst inc t5 dff
+x6 ina inb inc sum cout adder
 
 .control
-tran 0.01m 1
-plot t3 t4 t5
+tran 0.1m 1
+plot ina inb inc sum cout
 .endc
 
 .end
